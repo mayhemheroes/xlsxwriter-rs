@@ -1,6 +1,6 @@
 FROM ghcr.io/evanrichter/cargo-fuzz as builder
 
-ADD . /xlsxwriter
+ADD ../ /xlsxwriter
 WORKDIR /xlsxwriter/fuzz
 RUN cargo +nightly fuzz build 
 
