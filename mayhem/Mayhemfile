@@ -1,6 +1,9 @@
 project: xlsxwriter
 target: xlsxwriter-fuzz
 
+testsuite:
+    - file://./mayhem/corpus
+
 cmds:
     - cmd: ./xlsxwriter-fuzz
       libfuzzer: true
