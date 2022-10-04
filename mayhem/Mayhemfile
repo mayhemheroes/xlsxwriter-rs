@@ -1,0 +1,6 @@
+project: xlsxwriter
+target: xlsxwriter-fuzz
+
+cmds:
+    - cmd: ./xlsxwriter-fuzz
+      libfuzzer: true
