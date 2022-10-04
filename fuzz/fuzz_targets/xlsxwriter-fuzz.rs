@@ -2,6 +2,7 @@
 use libfuzzer_sys::fuzz_target;
 use xlsxwriter::*;
 use std::str;
+use std::ffi::CString;
 
 const MAX_STRING_SIZE: usize = 10;
 
@@ -22,7 +23,15 @@ fuzz_target!(|data: &[u8]| {
 
         match str_to_add {
             Ok(string_add) => {
-                sheet1.write_string(x.into(), y, string_add, Some(&format1));
+                // Theres a defect here in the original repository
+                // It unwraps this CString::new object unsafely
+                // I check that string is ok before passing it on
+                match CString::new(string_add) {
+                    Ok(..)=>{
+                        sheet1.write_string(x.into(), y, string_add, Some(&format1));
+                    },
+                    Err(..)=>()
+                }
             }
             Err(..)=>()
         }
