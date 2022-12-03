@@ -2,6 +2,8 @@ mod constants;
 mod series;
 mod structs;
 
+use crate::XlsxError;
+
 pub use self::constants::*;
 pub use self::series::*;
 pub use self::structs::*;
@@ -13,13 +15,13 @@ use super::Workbook;
 /// ```rust
 /// use xlsxwriter::*;
 /// # fn main() -> Result<(), XlsxError> {
-/// let workbook = Workbook::new("test-chart.xlsx");
+/// let workbook = Workbook::new("test-chart.xlsx")?;
 /// let mut worksheet = workbook.add_worksheet(None)?;
 /// write_worksheet(&mut worksheet)?; // write worksheet contents
 /// let mut chart = workbook.add_chart(ChartType::Column);
-/// chart.add_series(None, Some("=Sheet1!$A$1:$A$5"));
-/// chart.add_series(None, Some("=Sheet1!$B$1:$B$5"));
-/// chart.add_series(None, Some("=Sheet1!$C$1:$C$5"));
+/// chart.add_series(None, Some("=Sheet1!$A$1:$A$5"))?;
+/// chart.add_series(None, Some("=Sheet1!$B$1:$B$5"))?;
+/// chart.add_series(None, Some("=Sheet1!$C$1:$C$5"))?;
 /// worksheet.insert_chart(1, 3, &chart)?;
 /// workbook.close()
 /// # }
@@ -54,11 +56,11 @@ impl<'a> Chart<'a> {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// # let workbook = Workbook::new("test-chart-add_series-1.xlsx");
+    /// # let workbook = Workbook::new("test-chart-add_series-1.xlsx")?;
     /// # let mut worksheet = workbook.add_worksheet(None)?;
     /// # write_worksheet(&mut worksheet)?; // write worksheet contents
     /// # let mut chart = workbook.add_chart(ChartType::Column);
-    /// chart.add_series(Some("=Sheet1!$A$1:$A$5"), Some("=Sheet1!$B$1:$B$5"));
+    /// chart.add_series(Some("=Sheet1!$A$1:$A$5"), Some("=Sheet1!$B$1:$B$5"))?;
     /// # worksheet.insert_chart(1, 3, &chart)?;
     /// # workbook.close()
     /// # }
@@ -76,11 +78,11 @@ impl<'a> Chart<'a> {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// # let workbook = Workbook::new("test-chart-add_series-2.xlsx");
+    /// # let workbook = Workbook::new("test-chart-add_series-2.xlsx")?;
     /// # let mut worksheet = workbook.add_worksheet(None)?;
     /// # write_worksheet(&mut worksheet)?; // write worksheet contents
     /// # let mut chart = workbook.add_chart(ChartType::Column);
-    /// chart.add_series(None, Some("=Sheet1!$B$1:$B$5"));
+    /// chart.add_series(None, Some("=Sheet1!$B$1:$B$5"))?;
     /// # worksheet.insert_chart(1, 3, &chart)?;
     /// # workbook.close()
     /// # }
@@ -98,11 +100,11 @@ impl<'a> Chart<'a> {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// # let workbook = Workbook::new("test-chart-add_series-3.xlsx");
+    /// # let workbook = Workbook::new("test-chart-add_series-3.xlsx")?;
     /// # let mut worksheet = workbook.add_worksheet(None)?;
     /// # write_worksheet(&mut worksheet)?; // write worksheet contents
     /// # let mut chart = workbook.add_chart(ChartType::Column);
-    /// let mut series = chart.add_series(None, None);
+    /// let mut series = chart.add_series(None, None)?;
     /// series.set_categories("Sheet1", 0, 0, 4, 0); // "=Sheet1!$A$1:$A$5"
     /// series.set_values("Sheet1", 0, 1, 4, 1);     // "=Sheet1!$B$1:$B$5"
     /// # worksheet.insert_chart(1, 3, &chart)?;
@@ -123,7 +125,7 @@ impl<'a> Chart<'a> {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// # let workbook = Workbook::new("test-chart-add_series-4.xlsx");
+    /// # let workbook = Workbook::new("test-chart-add_series-4.xlsx")?;
     /// # let mut worksheet = workbook.add_worksheet(None)?;
     /// # write_worksheet(&mut worksheet)?; // write worksheet contents
     /// # let mut chart = workbook.add_chart(ChartType::Column);
@@ -146,11 +148,11 @@ impl<'a> Chart<'a> {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// # let workbook = Workbook::new("test-chart-add_series-5.xlsx");
+    /// # let workbook = Workbook::new("test-chart-add_series-5.xlsx")?;
     /// # let mut worksheet = workbook.add_worksheet(None)?;
     /// # write_worksheet(&mut worksheet)?; // write worksheet contents
     /// # let mut chart = workbook.add_chart(ChartType::Column);
-    /// chart.add_series(Some("=(Sheet1!$A$1:$A$5,Sheet1!$A$10:$A$18)"), Some("=(Sheet1!$B$1:$B$5,Sheet1!$B$10:$B$18)"));
+    /// chart.add_series(Some("=(Sheet1!$A$1:$A$5,Sheet1!$A$10:$A$18)"), Some("=(Sheet1!$B$1:$B$5,Sheet1!$B$10:$B$18)"))?;
     /// # worksheet.insert_chart(1, 3, &chart)?;
     /// # workbook.close()
     /// # }
@@ -167,26 +169,27 @@ impl<'a> Chart<'a> {
         &mut self,
         categories: Option<&str>,
         values: Option<&str>,
-    ) -> ChartSeries<'a> {
+    ) -> Result<ChartSeries<'a>, XlsxError> {
         let series = unsafe {
             libxlsxwriter_sys::chart_add_series(
                 self.chart,
-                self._workbook.register_option_str(categories),
-                self._workbook.register_option_str(values),
+                self._workbook.register_option_str(categories)?,
+                self._workbook.register_option_str(values)?,
             )
         };
-        ChartSeries {
+        Ok(ChartSeries {
             _workbook: self._workbook,
             chart_series: series,
-        }
+        })
     }
 
     /// The chart_title_set_name() function sets the name (title) for the chart. The name is displayed above the chart.
     /// The name parameter can also be a formula such as `=Sheet1!$A$1` to point to a cell in the workbook that contains the name.
     /// The Excel default is to have no chart title.
-    pub fn add_title(&mut self, title: &str) {
+    pub fn add_title(&mut self, title: &str) -> Result<(), XlsxError> {
         unsafe {
-            libxlsxwriter_sys::chart_title_set_name(self.chart, self._workbook.register_str(title))
+            libxlsxwriter_sys::chart_title_set_name(self.chart, self._workbook.register_str(title)?)
         }
+        Ok(())
     }
 }

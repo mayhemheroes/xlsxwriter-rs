@@ -1,5 +1,8 @@
-use super::{error, Chart, ChartType, Format, Worksheet, XlsxError};
+use crate::CStringHelper;
+
+use super::{Chart, ChartType, Format, Worksheet, XlsxError};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::pin::Pin;
@@ -10,7 +13,7 @@ use std::rc::Rc;
 /// ```rust
 /// use xlsxwriter::*;
 /// fn main() -> Result<(), XlsxError> {
-///     let workbook = Workbook::new("test-workbook.xlsx");
+///     let workbook = Workbook::new("test-workbook.xlsx")?;
 ///     let mut worksheet = workbook.add_worksheet(None)?;
 ///     worksheet.write_string(0, 0, "Hello Excel", None)?;
 ///     workbook.close()
@@ -19,40 +22,70 @@ use std::rc::Rc;
 pub struct Workbook {
     workbook: *mut libxlsxwriter_sys::lxw_workbook,
     pub(crate) const_str: Rc<RefCell<Vec<Pin<Box<CString>>>>>,
+    format_map: Rc<RefCell<HashMap<Format, *mut libxlsxwriter_sys::lxw_format>>>,
 }
 
 impl Workbook {
-    pub(crate) fn register_str(&self, s: &str) -> *const c_char {
-        let c = Box::pin(CString::new(s).expect("Cannot create CString from string"));
-        let p = c.as_ptr();
-        self.const_str.borrow_mut().push(c);
-        p
+    pub(crate) fn get_internal_format(
+        &self,
+        format: &Format,
+    ) -> Result<*mut libxlsxwriter_sys::lxw_format, XlsxError> {
+        let mut map = self.format_map.borrow_mut();
+        if let Some(p) = map.get(format) {
+            Ok(*p)
+        } else {
+            unsafe {
+                let new_format = libxlsxwriter_sys::workbook_add_format(self.workbook);
+                format.set_internal_format(new_format)?;
+                map.insert(format.clone(), new_format);
+                Ok(new_format)
+            }
+        }
     }
 
-    pub(crate) fn register_option_str(&self, s: Option<&str>) -> *const c_char {
+    pub(crate) fn get_internal_option_format(
+        &self,
+        format: Option<&Format>,
+    ) -> Result<*mut libxlsxwriter_sys::lxw_format, XlsxError> {
+        if let Some(format) = format {
+            Ok(self.get_internal_format(format)?)
+        } else {
+            Ok(std::ptr::null_mut())
+        }
+    }
+
+    pub(crate) fn register_str(&self, s: &str) -> Result<*const c_char, XlsxError> {
+        let c = Box::pin(CString::new(s)?);
+        let p = c.as_ptr();
+        self.const_str.borrow_mut().push(c);
+        Ok(p)
+    }
+
+    pub(crate) fn register_option_str(&self, s: Option<&str>) -> Result<*const c_char, XlsxError> {
         if let Some(s) = s {
-            let c = Box::pin(CString::new(s).expect("Cannot create CString from string"));
+            let c = Box::pin(CString::new(s)?);
             let p = c.as_ptr();
             self.const_str.borrow_mut().push(c);
-            p
+            Ok(p)
         } else {
-            std::ptr::null()
+            Ok(std::ptr::null())
         }
     }
 
     /// This function is used to create a new Excel workbook with a given filename.
     /// When specifying a filename it is recommended that you use an .xlsx extension or Excel will generate a warning when opening the file.
-    pub fn new(filename: &str) -> Workbook {
+    pub fn new(filename: &str) -> Result<Workbook, XlsxError> {
         unsafe {
-            let workbook_name = Box::pin(CString::new(filename).expect("Null Error"));
+            let workbook_name = Box::pin(CString::new(filename)?);
             let raw_workbook = libxlsxwriter_sys::workbook_new(workbook_name.as_ptr());
             if raw_workbook.is_null() {
                 unreachable!()
             }
-            Workbook {
+            Ok(Workbook {
                 workbook: raw_workbook,
                 const_str: Rc::new(RefCell::new(vec![workbook_name])),
-            }
+                format_map: Rc::new(RefCell::new(HashMap::new())),
+            })
         }
     }
 
@@ -60,7 +93,7 @@ impl Workbook {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// let workbook = Workbook::new_with_options("test-workbook_with_options.xlsx", true, Some("target"), true);
+    /// let workbook = Workbook::new_with_options("test-workbook_with_options.xlsx", true, Some("target"), true)?;
     /// let mut worksheet = workbook.add_worksheet(None)?;
     /// worksheet.write_string(0, 0, "Hello Excel", None)?;
     /// workbook.close()
@@ -93,16 +126,11 @@ impl Workbook {
         constant_memory: bool,
         tmpdir: Option<&str>,
         use_zip64: bool,
-    ) -> Workbook {
-        let tmpdir_vec = tmpdir.map(|x| CString::new(x).unwrap().as_bytes_with_nul().to_vec());
+    ) -> Result<Workbook, XlsxError> {
+        let mut c_string_helper = CStringHelper::new();
+        let tmpdir_ptr = c_string_helper.add_opt(tmpdir)?;
 
         unsafe {
-            let tmpdir_ptr = if let Some(tmpdir) = tmpdir_vec.as_ref() {
-                tmpdir.as_ptr()
-            } else {
-                std::ptr::null()
-            };
-
             let mut workbook_options = libxlsxwriter_sys::lxw_workbook_options {
                 constant_memory: constant_memory as u8,
                 tmpdir: tmpdir_ptr as *mut c_char,
@@ -116,10 +144,11 @@ impl Workbook {
             if raw_workbook.is_null() {
                 unreachable!()
             }
-            Workbook {
+            Ok(Workbook {
                 workbook: raw_workbook,
                 const_str: Rc::new(RefCell::new(vec![workbook_name])),
-            }
+                format_map: Rc::new(RefCell::new(HashMap::new())),
+            })
         }
     }
 
@@ -153,7 +182,7 @@ impl Workbook {
             }
 
             if worksheet.is_null() {
-                return Err(XlsxError::new(error::UNKNOWN_ERROR_CODE));
+                return Err(XlsxError::unknown_error());
             }
 
             Ok(Worksheet {
@@ -163,38 +192,30 @@ impl Workbook {
         }
     }
 
-    pub fn get_worksheet<'a>(&'a self, sheet_name: &str) -> Option<Worksheet<'a>> {
+    pub fn get_worksheet<'a>(
+        &'a self,
+        sheet_name: &str,
+    ) -> Result<Option<Worksheet<'a>>, XlsxError> {
         unsafe {
             let worksheet = libxlsxwriter_sys::workbook_get_worksheet_by_name(
                 self.workbook,
-                CString::new(sheet_name)
-                    .expect("Null Error")
-                    .as_c_str()
-                    .as_ptr(),
+                CString::new(sheet_name)?.as_c_str().as_ptr(),
             );
             if worksheet.is_null() {
-                None
+                Ok(None)
             } else {
-                Some(Worksheet {
+                Ok(Some(Worksheet {
                     _workbook: self,
                     worksheet,
-                })
+                }))
             }
         }
     }
 
+    // only for compatibility
+    //
     pub fn add_format(&self) -> Format {
-        unsafe {
-            let format = libxlsxwriter_sys::workbook_add_format(self.workbook);
-            if format.is_null() {
-                unreachable!();
-            }
-
-            Format {
-                _workbook: self,
-                format,
-            }
-        }
+        Format::new()
     }
 
     pub fn add_chart(&self, chart_type: ChartType) -> Chart {
@@ -217,7 +238,7 @@ impl Workbook {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// let workbook = Workbook::new("test-workbook-define_name.xlsx");
+    /// let workbook = Workbook::new("test-workbook-define_name.xlsx")?;
     /// let mut worksheet = workbook.add_worksheet(None)?;
     /// workbook.define_name("Exchange_rate", "=0.95");
     /// worksheet.write_formula(0, 0, "=Exchange_rate", None);

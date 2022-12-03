@@ -1,6 +1,9 @@
 use std::os::raw::c_char;
 
-use crate::{convert_bool, CStringHelper, WorksheetCol, WorksheetRow, XlsxError};
+use crate::{
+    convert_bool, error::XlsxErrorSource, try_to_vec, CStringHelper, WorksheetCol, WorksheetRow,
+    XlsxError,
+};
 
 use super::{Format, Worksheet};
 
@@ -8,7 +11,7 @@ use super::{Format, Worksheet};
 ///
 /// Please read [libxslxwriter document](https://libxlsxwriter.github.io/working_with_tables.html) to learn more.
 #[derive(Default)]
-pub struct TableColumn<'a> {
+pub struct TableColumn {
     /// Set the header name/caption for the column. If NULL the header defaults to Column 1, Column 2, etc.
     pub header: Option<String>,
 
@@ -22,10 +25,10 @@ pub struct TableColumn<'a> {
     pub total_function: TableTotalFunction,
 
     /// Set the format for the column header.
-    pub header_format: Option<Format<'a>>,
+    pub header_format: Option<Format>,
 
     /// Set the format for the data rows in the column.
-    pub format: Option<Format<'a>>,
+    pub format: Option<Format>,
 
     /// Set the formula value for the column total (not generally required).
     pub total_value: f64,
@@ -139,7 +142,7 @@ impl From<TableTotalFunction> for u8 {
 /// ```rust
 /// # use xlsxwriter::*;
 /// # fn main() -> Result<(), XlsxError> {
-/// # let workbook = Workbook::new("test-worksheet_add_table-1.xlsx");
+/// # let workbook = Workbook::new("test-worksheet_add_table-1.xlsx")?;
 /// # let mut worksheet = workbook.add_worksheet(None)?;
 /// worksheet.write_string(0, 0, "header 1", None)?;
 /// worksheet.write_string(0, 1, "header 2", None)?;
@@ -154,7 +157,7 @@ impl From<TableTotalFunction> for u8 {
 /// # }
 /// ```
 #[derive(Default)]
-pub struct TableOptions<'a> {
+pub struct TableOptions {
     /**
      * The name parameter is used to set the name of the table. This parameter is optional and by
      * default tables are named Table1, Table2, etc. in the worksheet order that they are added.
@@ -191,7 +194,7 @@ pub struct TableOptions<'a> {
     pub total_row: bool,
 
     /// The columns parameter can be used to set properties for columns within the table.
-    pub columns: Option<Vec<TableColumn<'a>>>,
+    pub columns: Option<Vec<TableColumn>>,
 }
 
 impl<'a> Worksheet<'a> {
@@ -203,7 +206,7 @@ impl<'a> Worksheet<'a> {
     /// ```rust
     /// # use xlsxwriter::*;
     /// # fn main() -> Result<(), XlsxError> {
-    /// # let workbook = Workbook::new("test-worksheet_add_table-0.xlsx");
+    /// # let workbook = Workbook::new("test-worksheet_add_table-0.xlsx")?;
     /// # let mut worksheet = workbook.add_worksheet(None)?;
     /// worksheet.write_string(0, 0, "header 1", None)?;
     /// worksheet.write_string(0, 1, "header 2", None)?;
@@ -225,38 +228,56 @@ impl<'a> Worksheet<'a> {
         first_col: WorksheetCol,
         last_row: WorksheetRow,
         last_col: WorksheetCol,
-        options: Option<TableOptions<'a>>,
+        options: Option<TableOptions>,
     ) -> Result<(), XlsxError> {
         let mut cstring_helper = CStringHelper::new();
 
-        let columns: Option<Vec<_>> =
-            options
-                .as_ref()
-                .map(|x| x.columns.as_ref())
-                .flatten()
-                .map(|x| {
+        if options
+            .as_ref()
+            .map(|x| x.columns.as_ref())
+            .flatten()
+            .map(|x| x.len() as WorksheetCol != last_col - first_col + 1)
+            .unwrap_or(false)
+        {
+            return Err(XlsxError {
+                source: XlsxErrorSource::NumberOfColumnsIsNotMatched,
+            });
+        }
+
+        let columns: Option<Vec<_>> = options
+            .as_ref()
+            .map(|x| x.columns.as_ref())
+            .flatten()
+            .map(|x| {
+                try_to_vec(
                     x.iter()
-                        .map(|y| libxlsxwriter_sys::lxw_table_column {
-                            header: cstring_helper.add_opt(y.header.as_deref()) as *mut c_char,
-                            formula: cstring_helper.add_opt(y.formula.as_deref()) as *mut c_char,
-                            total_string: cstring_helper.add_opt(y.total_string.as_deref())
-                                as *mut c_char,
-                            total_function: y.total_function.into(),
-                            header_format: y
-                                .header_format
-                                .as_ref()
-                                .map(|x| x.format)
-                                .unwrap_or(std::ptr::null_mut()),
-                            format: y
-                                .format
-                                .as_ref()
-                                .map(|x| x.format)
-                                .unwrap_or(std::ptr::null_mut()),
-                            total_value: y.total_value,
-                        })
-                        .map(|x| Box::pin(x))
-                        .collect()
-                });
+                        .map(
+                            |y| -> Result<libxlsxwriter_sys::lxw_table_column, XlsxError> {
+                                Ok(libxlsxwriter_sys::lxw_table_column {
+                                    header: cstring_helper.add_opt(y.header.as_deref())?
+                                        as *mut c_char,
+                                    formula: cstring_helper.add_opt(y.formula.as_deref())?
+                                        as *mut c_char,
+                                    total_string: cstring_helper
+                                        .add_opt(y.total_string.as_deref())?
+                                        as *mut c_char,
+                                    total_function: y.total_function.into(),
+                                    header_format: self
+                                        ._workbook
+                                        .get_internal_option_format(y.header_format.as_ref())
+                                        .unwrap(), // fix here
+                                    format: self
+                                        ._workbook
+                                        .get_internal_option_format(y.format.as_ref())
+                                        .unwrap(), // fix here
+                                    total_value: y.total_value,
+                                })
+                            },
+                        )
+                        .map(|x| x.map(|y| Box::pin(y))),
+                )
+            })
+            .transpose()?;
 
         let columns_ptr: Option<Vec<_>> = columns.as_ref().map(|x| {
             let mut p: Vec<_> = x
@@ -270,7 +291,7 @@ impl<'a> Worksheet<'a> {
 
         let mut options = if let Some(options) = options {
             Some(libxlsxwriter_sys::lxw_table_options {
-                name: cstring_helper.add_opt(options.name.as_deref()) as *mut c_char,
+                name: cstring_helper.add_opt(options.name.as_deref())? as *mut c_char,
                 no_header_row: convert_bool(options.no_header_row),
                 no_autofilter: convert_bool(options.no_autofilter),
                 no_banded_rows: convert_bool(options.no_banded_rows),
@@ -304,6 +325,8 @@ impl<'a> Worksheet<'a> {
             std::mem::drop(options);
             std::mem::drop(columns_ptr);
             std::mem::drop(columns);
+
+            std::mem::drop(cstring_helper);
 
             if result == libxlsxwriter_sys::lxw_error_LXW_NO_ERROR {
                 Ok(())

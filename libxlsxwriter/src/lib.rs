@@ -29,30 +29,21 @@
 //! use xlsxwriter::*;
 //!
 //! # fn main() -> Result<(), XlsxError> {
-//! let workbook = Workbook::new("simple1.xlsx");
-//! let mut format1 = workbook.add_format()
-//!     .set_font_color(FormatColor::Red);
-//!
-//! let mut format2 = workbook.add_format()
-//!     .set_font_color(FormatColor::Blue)
-//!     .set_underline(FormatUnderline::Single);
-//!
-//! let mut format3 = workbook.add_format()
-//!     .set_font_color(FormatColor::Green)
-//!     .set_align(FormatAlignment::CenterAcross)
-//!     .set_align(FormatAlignment::VerticalCenter);
+//! let workbook = Workbook::new("simple1.xlsx")?;
 //!
 //! let mut sheet1 = workbook.add_worksheet(None)?;
-//! sheet1.write_string(0, 0, "Red text", Some(&format1))?;
+//! sheet1.write_string(0, 0, "Red text", Some(&Format::new().set_font_color(FormatColor::Red)))?;
 //! sheet1.write_number(0, 1, 20., None)?;
 //! sheet1.write_formula_num(1, 0, "=10+B1", None, 30.)?;
 //! sheet1.write_url(
 //!     1,
 //!     1,
 //!     "https://github.com/informationsea/xlsxwriter-rs",
-//!     Some(&format2),
+//!     Some(&Format::new().set_font_color(FormatColor::Blue).set_underline(FormatUnderline::Single)),
 //! )?;
-//! sheet1.merge_range(2, 0, 3, 2, "Hello, world", Some(&format3))?;
+//! sheet1.merge_range(2, 0, 3, 2, "Hello, world", Some(
+//!     &Format::new().set_font_color(FormatColor::Green).set_align(FormatAlignment::CenterAcross)
+//!                   .set_vertical_align(FormatVerticalAlignment::VerticalCenter)))?;
 //!
 //! sheet1.set_selection(1, 0, 1, 2);
 //! sheet1.set_tab_color(FormatColor::Cyan);
@@ -110,19 +101,83 @@ impl CStringHelper {
         }
     }
 
-    pub fn add(&mut self, s: &str) -> *const c_char {
+    pub fn add(&mut self, s: &str) -> Result<*const c_char, XlsxError> {
         let s = Box::pin(CString::new(s).unwrap());
         let p = s.as_ptr();
         self.strings.push(s);
-        p
+        Ok(p)
     }
 
-    pub fn add_opt(&mut self, s: Option<&str>) -> *const c_char {
+    pub fn add_opt(&mut self, s: Option<&str>) -> Result<*const c_char, XlsxError> {
         if let Some(s) = s {
             self.add(s)
         } else {
-            std::ptr::null()
+            Ok(std::ptr::null())
         }
+    }
+}
+
+pub(crate) fn try_to_vec<I, T>(it: I) -> Result<Vec<T>, XlsxError>
+where
+    I: std::iter::Iterator<Item = Result<T, XlsxError>>,
+{
+    let mut r = Vec::new();
+    for one in it {
+        r.push(one?);
+    }
+    Ok(r)
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum StringOrFloat {
+    String(String),
+    Float(f64),
+}
+
+impl Default for StringOrFloat {
+    fn default() -> Self {
+        StringOrFloat::Float(0.)
+    }
+}
+
+impl StringOrFloat {
+    pub fn to_string(self) -> Option<String> {
+        match self {
+            StringOrFloat::String(x) => Some(x),
+            StringOrFloat::Float(_) => None,
+        }
+    }
+
+    pub fn to_str(&self) -> Option<&str> {
+        match self {
+            StringOrFloat::String(x) => Some(x.as_str()),
+            StringOrFloat::Float(_) => None,
+        }
+    }
+
+    pub fn to_f64(&self) -> Option<f64> {
+        match self {
+            StringOrFloat::String(_) => None,
+            StringOrFloat::Float(x) => Some(*x),
+        }
+    }
+}
+
+impl From<&str> for StringOrFloat {
+    fn from(val: &str) -> Self {
+        StringOrFloat::String(val.to_string())
+    }
+}
+
+impl From<String> for StringOrFloat {
+    fn from(val: String) -> Self {
+        StringOrFloat::String(val)
+    }
+}
+
+impl From<f64> for StringOrFloat {
+    fn from(val: f64) -> Self {
+        StringOrFloat::Float(val)
     }
 }
 
